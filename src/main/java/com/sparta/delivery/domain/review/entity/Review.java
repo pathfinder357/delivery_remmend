@@ -14,6 +14,7 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToOne;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import java.util.UUID;
 
 import jakarta.persistence.Version;
@@ -25,7 +26,13 @@ import org.hibernate.annotations.SQLDelete;
 import org.hibernate.annotations.SQLRestriction;
 
 @Entity
-@Table(name = "p_reviews")
+@Table(
+	name = "p_reviews",
+	// 하나의 주문에는 리뷰가 하나만 존재해야 한다.
+	// 애플리케이션 사전 검증(exists 조회)은 동시 요청에서 둘 다 통과할 수 있으므로
+	// 최종 정합성은 DB UNIQUE 제약이 보장한다.
+	uniqueConstraints = @UniqueConstraint(name = "uk_reviews_order_id", columnNames = "order_id")
+)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @SQLDelete(sql = "UPDATE p_reviews SET is_deleted = true, deleted_at = CURRENT_TIMESTAMP WHERE id = ?")

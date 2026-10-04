@@ -84,13 +84,14 @@ public class ReviewController {
 
 	// 리뷰 삭제
 	@DeleteMapping("/reviews/{reviewId}")
-	public ResponseEntity<Void> deleteReview(@PathVariable("reviewId") UUID reviewId, @AuthenticationPrincipal UserDetailsImpl userDetails) {
-		Long customerId = userDetails.getUser().getId();
+	public ResponseEntity<Void> deleteReview(@PathVariable("reviewId") UUID reviewId,
+		@AuthenticationPrincipal UserDetailsImpl userDetails) {
+		Long userId = userDetails.getUser().getId();
 		Enums.UserRole role = userDetails.getUser().getRole();
-		if (role == Enums.UserRole.OWNER) {
-			throw new IllegalArgumentException("삭제 권한 없음");
-		}
-		reviewService.deleteReview(reviewId, customerId);
+
+		// 역할/소유권 판단은 Service에서 한다.
+		// (Controller에서 OWNER만 걸러내면 "로그인한 다른 고객"이 남의 리뷰를 지우는 경로가 열려 있다)
+		reviewService.deleteReview(reviewId, userId, role);
 		return ResponseEntity.noContent().build();
 	}
 

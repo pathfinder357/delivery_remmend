@@ -1,33 +1,46 @@
 package com.sparta.delivery.domain.ai.service.aiToClient;
+
 import java.util.List;
+
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
+
 import com.sparta.delivery.domain.ai.dto.Gemini.GeminiRequestDto;
 import com.sparta.delivery.domain.ai.dto.Gemini.GeminiResponseDto;
+import com.sparta.delivery.global.exception.ExternalApiException;
+
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 @Slf4j(topic = "AI Connect Api")
 @Service
 @RequiredArgsConstructor
-// 외부 API와 통신만을 위한 서비스 이므로 @Transaction이 필요치 않음
+// 외부 API와의 통신만 담당하므로 @Transactional을 두지 않는다.
+// (DB 트랜잭션 안에서 외부 호출을 기다리면 커넥션을 오래 점유하게 된다)
 public class AiService {
 
 	private static final String GEMINI_API_URL =
 		"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=";
+
+	// 프롬프트에 사용자 입력이 섞여 들어올 수 있으므로 로그는 길이를 제한해서 남긴다.
+	private static final int MAX_PROMPT_LOG_LENGTH = 200;
+
 	private final RestTemplate restTemplate;
-	@Value("${google.gemini.api-key}") // 개인 제미나이 키 넣으세요 + 노출되면 해킹위험있다니 application.yml에 따로 적는게 좋을듯 합니다.
+
+	@Value("${google.gemini.api-key}")
 	private String geminiApiKey;
 
 	public String requestToGemini(String prompt) {
 
-		log.info("제미나이 API 호출 프롬포트: {}", prompt);
+		// URL에 API 키가 포함되므로 요청 URL 자체는 절대 로그로 남기지 않는다.
+		log.info("Gemini API 호출 - prompt={}", abbreviate(prompt));
 
 		GeminiRequestDto.Part part = new GeminiRequestDto.Part(prompt);
 		GeminiRequestDto.Content content = new GeminiRequestDto.Content(List.of(part));
@@ -37,29 +50,51 @@ public class AiService {
 		headers.setContentType(MediaType.APPLICATION_JSON);
 
 		HttpEntity<GeminiRequestDto> request = new HttpEntity<>(requestDto, headers);
-
 		String requestUrl = GEMINI_API_URL + geminiApiKey;
 
 		try {
 			ResponseEntity<GeminiResponseDto> response =
-				restTemplate.postForEntity(requestUrl, request, GeminiResponseDto.class); // 받은 데이터 == 텍스트 데이터
-			// 스프링 컨버터가 어떻게 반환? -> 리스폰스dto 클래스 설계대로 반환
-			// text -> Json 역직렬화
+				restTemplate.postForEntity(requestUrl, request, GeminiResponseDto.class);
 			return extractTextFromResponse(response.getBody());
-		} catch (RestClientException e){
-			log.error("API 호충중 에러 발생" , e);
-			throw new RuntimeException("Ai 메뉴 설명 생성 실패",e);
+
+		} catch (ResourceAccessException e) {
+			// 커넥션/리드 타임아웃, 네트워크 오류. RestClientException 의 하위 타입이므로 먼저 잡는다.
+			log.error("Gemini API 응답 지연 또는 네트워크 오류", e);
+			throw new ExternalApiException("AI 서버 응답이 지연되어 메뉴 설명 생성에 실패했습니다.", e);
+
+		} catch (RestClientException e) {
+			// 4xx/5xx 응답, 역직렬화 실패 등
+			log.error("Gemini API 호출 실패", e);
+			throw new ExternalApiException("AI 메뉴 설명 생성에 실패했습니다.", e);
 		}
 	}
 
 	private String extractTextFromResponse(GeminiResponseDto body) {
 		if (body == null || body.getCandidates() == null || body.getCandidates().isEmpty()) {
-			throw new RuntimeException("AI 응답 하지 않음");
+			throw new ExternalApiException("AI가 응답을 반환하지 않았습니다.");
 		}
-		return body.getCandidates().get(0)
-			.getContent()
-			.getParts().get(0)
-			.getText()
-			.trim();
+
+		GeminiResponseDto.Candidate candidate = body.getCandidates().get(0);
+		if (candidate == null
+			|| candidate.getContent() == null
+			|| candidate.getContent().getParts() == null
+			|| candidate.getContent().getParts().isEmpty()) {
+			throw new ExternalApiException("AI 응답 형식이 올바르지 않습니다.");
+		}
+
+		String text = candidate.getContent().getParts().get(0).getText();
+		if (text == null || text.isBlank()) {
+			throw new ExternalApiException("AI 응답이 비어 있습니다.");
+		}
+		return text.trim();
+	}
+
+	private String abbreviate(String value) {
+		if (value == null) {
+			return null;
+		}
+		return value.length() <= MAX_PROMPT_LOG_LENGTH
+			? value
+			: value.substring(0, MAX_PROMPT_LOG_LENGTH) + "...(생략)";
 	}
 }

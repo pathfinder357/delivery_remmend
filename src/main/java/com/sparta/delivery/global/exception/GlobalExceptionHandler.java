@@ -3,6 +3,7 @@ package com.sparta.delivery.global.exception;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.security.access.AccessDeniedException;
@@ -53,9 +54,12 @@ public class GlobalExceptionHandler {
 	// 403 Forbidden (권한 부족)
 	@ExceptionHandler(AccessDeniedException.class)
 	public ResponseEntity<ErrorResponse> handleAccessDenied(AccessDeniedException ex) {
+		String message = (ex.getMessage() == null || ex.getMessage().isBlank())
+			? "해당 요청에 대한 접근 권한이 없습니다."
+			: ex.getMessage();
 		return ResponseEntity
 			.status(HttpStatus.FORBIDDEN)
-			.body(new ErrorResponse(HttpStatus.FORBIDDEN.value(), "해당 요청에 대한 접근 권한이 없습니다."));
+			.body(new ErrorResponse(HttpStatus.FORBIDDEN.value(), message));
 	}
 
 
@@ -95,6 +99,33 @@ public class GlobalExceptionHandler {
 						HttpStatus.CONFLICT.value(),
 						"다른 사용자가 그 사이에 정보를 수정했습니다. 데이터를 새로고침한 후 다시 시도해 주세요."
 				));
+	}
+
+	// 409 Conflict (중복 생성 - 애플리케이션 사전 검증 또는 DB UNIQUE 제약 위반)
+	@ExceptionHandler(DuplicateResourceException.class)
+	public ResponseEntity<ErrorResponse> handleDuplicateResource(DuplicateResourceException ex) {
+		return ResponseEntity
+			.status(HttpStatus.CONFLICT) // 409
+			.body(new ErrorResponse(HttpStatus.CONFLICT.value(), ex.getMessage()));
+	}
+
+	// 409 Conflict (서비스에서 잡지 못하고 올라온 DB 제약 위반)
+	// 사전 조회를 통과한 동시 요청이 DB UNIQUE 제약에서 걸러지는 경우가 대표적이다.
+	@ExceptionHandler(DataIntegrityViolationException.class)
+	public ResponseEntity<ErrorResponse> handleDataIntegrityViolation(DataIntegrityViolationException ex) {
+		log.warn("Data Integrity Violation: ", ex);
+		return ResponseEntity
+			.status(HttpStatus.CONFLICT) // 409
+			.body(new ErrorResponse(HttpStatus.CONFLICT.value(), "이미 처리된 요청이거나 데이터 제약 조건을 위반했습니다."));
+	}
+
+	// 502 Bad Gateway (외부 API 연동 실패 - 우리 서버의 버그가 아니라 외부 의존 시스템 문제)
+	@ExceptionHandler(ExternalApiException.class)
+	public ResponseEntity<ErrorResponse> handleExternalApi(ExternalApiException ex) {
+		log.error("External API Error: ", ex);
+		return ResponseEntity
+			.status(HttpStatus.BAD_GATEWAY) // 502
+			.body(new ErrorResponse(HttpStatus.BAD_GATEWAY.value(), ex.getMessage()));
 	}
 
 	@ExceptionHandler(Exception.class) // 위에서 걸러지지 않은 모든 예외 처리

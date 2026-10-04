@@ -11,6 +11,13 @@ import java.util.UUID;
 
 public interface ReviewRepository extends JpaRepository<Review, UUID>, ReviewRepositoryCustom {
 	boolean existsByOrderId(UUID id);
+
+	// Review 엔티티에는 @SQLRestriction("is_deleted = false")가 걸려 있어서
+	// existsByOrderId()는 "삭제되지 않은 리뷰"만 본다.
+	// 반면 DB의 UNIQUE 제약은 소프트 딜리트된 행까지 포함해서 검사하므로,
+	// 사전 검증과 DB 제약의 기준을 맞추기 위해 삭제 여부와 무관하게 세는 네이티브 쿼리를 둔다.
+	@Query(value = "SELECT COUNT(*) FROM p_reviews WHERE order_id = :orderId", nativeQuery = true)
+	long countByOrderIdIncludingDeleted(@Param("orderId") UUID orderId);
 	Long countByRestaurantIdAndIsDeletedFalse(UUID id);
 
 	@Query("SELECT COALESCE(AVG(r.rating), 0.0) " +
